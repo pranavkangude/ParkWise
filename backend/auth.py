@@ -1,11 +1,16 @@
 import re
 from functools import wraps
-from flask import Blueprint, request, session, jsonify
+from flask import Blueprint, session, jsonify
 from werkzeug.security import generate_password_hash, check_password_hash
-import db
+import config, db
 from errors import ApiError
+from ratelimit import FailureLimiter
+from validate import json_body, text, opt_text, secret
 
 bp = Blueprint("auth", __name__)
+
+# One limiter for the whole app (Decision D-19): wrong passwords per e-mail address.
+login_limiter = FailureLimiter(config.LOGIN_MAX_FAILS, config.LOGIN_WINDOW_MIN * 60)
 
 def current_user():
     uid = session.get("uid")
@@ -27,6 +32,7 @@ def admin_required(f):
         if session.get("role") != "ADMIN":
             raise ApiError("Admin only.", 403)
         return f(*a, **k)
+    w.admin_guard = True          # app.py refuses to start if an /api/admin or /api/analytics route lacks this
     return w
 
 def is_admin():
@@ -39,31 +45,39 @@ def need(data, *fields):
 
 @bp.post("/auth/register")
 def register():
-    d = request.get_json(silent=True) or {}
+    d = json_body()
     need(d, "full_name", "email", "password")
-    email = d["email"].strip().lower()
+    name = text(d["full_name"], "full_name", 100)
+    email = text(d["email"], "email", 120).lower()
     if not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", email):
         raise ApiError("Enter a valid email address.")
-    if len(d["password"]) < 6:
-        raise ApiError("Password must be at least 6 characters.")
-    phone = (d.get("phone") or "").strip() or None
-    if phone and not re.fullmatch(r"\d{10,15}", phone):
+    password = secret(d["password"], "password", 6, 128)
+    phone = opt_text(d.get("phone"), "phone", 15)
+    if phone and not re.fullmatch(r"[0-9]{10,15}", phone):
         raise ApiError("Phone must be 10 to 15 digits.")
     if db.one("SELECT 1 AS x FROM users WHERE email = %s", (email,)):
         raise ApiError("This email is already registered.", 409)
     uid, _ = db.execute(
         "INSERT INTO users (full_name, email, phone, password_hash, role) VALUES (%s,%s,%s,%s,'USER')",
-        (d["full_name"].strip(), email, phone, generate_password_hash(d["password"])))
+        (name, email, phone, generate_password_hash(password)))
     return jsonify(user_id=uid, message="Registered. You can log in now."), 201
 
 @bp.post("/auth/login")
 def login():
-    d = request.get_json(silent=True) or {}
+    d = json_body()
     need(d, "email", "password")
-    u = db.one("SELECT user_id, full_name, email, role, password_hash FROM users WHERE email = %s",
-               (d["email"].strip().lower(),))
-    if not u or not check_password_hash(u["password_hash"], d["password"]):
+    email = text(d["email"], "email", 120).lower()
+    password = secret(d["password"], "password", 0, 128)
+    wait = login_limiter.retry_after(email)
+    if wait:
+        minutes = (wait + 59) // 60
+        raise ApiError(f"Too many failed logins. Try again in {minutes} minute(s).", 429,
+                       {"Retry-After": str(wait)})
+    u = db.one("SELECT user_id, full_name, email, role, password_hash FROM users WHERE email = %s", (email,))
+    if not u or not check_password_hash(u["password_hash"], password):
+        login_limiter.record(email)               # unknown e-mails count too, so the answer never reveals who exists
         raise ApiError("Wrong email or password.", 401)
+    login_limiter.clear(email)
     session.clear()
     session["uid"], session["role"] = u["user_id"], u["role"]
     u.pop("password_hash")

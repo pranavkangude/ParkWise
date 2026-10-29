@@ -1,7 +1,8 @@
-from flask import Blueprint, request, jsonify, session
+from flask import Blueprint, jsonify, session
 import db
 from auth import login_required, is_admin, need, owns_session
 from errors import ApiError
+from validate import json_body
 from .util import to_int
 
 bp = Blueprint("billing", __name__)
@@ -27,7 +28,7 @@ def bill(sid):
 @bp.post("/payments")
 @login_required
 def pay():
-    d = request.get_json(silent=True) or {}
+    d = json_body()
     need(d, "session_id", "method")
     sid = to_int(d["session_id"], "session_id")
     if d["method"] not in ("CASH", "UPI", "CARD"):

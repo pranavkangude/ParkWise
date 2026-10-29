@@ -61,24 +61,38 @@ async function board(el) {
   await draw(); timer = setInterval(() => draw().catch(() => {}), 10000);
 }
 function login(el) {
-  el.innerHTML = `<div class="card"><div class="row"><label>Email<input id="e" type="email"></label><label>Password<input id="p" type="password"></label><button id="go">Login</button></div>
+  el.innerHTML = `<div class="card"><div class="row"><label>Email<input id="e" type="email" maxlength="120" autocomplete="username"></label><label>Password<input id="p" type="password" maxlength="128" autocomplete="current-password"></label><button id="go">Login</button></div>
   <p class="mut">Demo: admin@parkwise.test / Admin@123 · aarav@parkwise.test / Student@123</p></div>`;
   $("#go").onclick = async () => { const r = await act(() => api("/auth/login", "POST", {email: $("#e").value, password: $("#p").value})); if (r) { me = r; location.hash = "board"; render(); } };
 }
 function register(el) {
-  el.innerHTML = `<div class="card"><div class="row"><label>Full name<input id="n"></label><label>Email<input id="e" type="email"></label><label>Phone<input id="ph"></label><label>Password<input id="p" type="password"></label><button id="go">Register</button></div></div>`;
+  el.innerHTML = `<div class="card"><div class="row"><label>Full name<input id="n" maxlength="100" autocomplete="name"></label><label>Email<input id="e" type="email" maxlength="120" autocomplete="email"></label><label>Phone<input id="ph" maxlength="15" inputmode="numeric" autocomplete="tel"></label><label>Password (6+ characters)<input id="p" type="password" maxlength="128" autocomplete="new-password"></label><button id="go">Register</button></div></div>`;
   $("#go").onclick = async () => { const r = await act(() => api("/auth/register", "POST", {full_name: $("#n").value, email: $("#e").value, phone: $("#ph").value, password: $("#p").value}), "Registered. Please log in."); if (r) location.hash = "login"; };
 }
 
 // ---------- user ----------
 const vehOptions = vs => vs.map(v => `<option value="${v.vehicle_id}">${esc(v.reg_number)} (${v.vehicle_type === "CAR" ? "Car" : "Bike"}${v.is_ev ? ", EV" : ""})</option>`).join("");
-async function vehicles(el) {
+async function vehicles(el, editId = null) {
   const vs = await api("/vehicles");
-  el.innerHTML = `<div class="card">${table([["Reg. number", v => v.reg_number], ["Type", v => v.vehicle_type], ["EV", v => v.is_ev ? "Yes" : "No"], ["Accessible permit", v => v.has_accessible_permit ? "Yes" : "No"]], vs, "No vehicles yet.")}</div>
-  <div class="card"><h3>Add a vehicle</h3><div class="row"><label>Registration no.<input id="r" placeholder="MH12AB1234"></label>
+  const ed = vs.find(v => v.vehicle_id === editId) || null;
+  el.innerHTML = `<div class="card">${table([["Reg. number", v => v.reg_number], ["Type", v => v.vehicle_type], ["EV", v => v.is_ev ? "Yes" : "No"], ["Accessible permit", v => v.has_accessible_permit ? "Yes" : "No"],
+    ["", v => `<button class="sec" data-edit="${v.vehicle_id}">Edit</button> <button class="red" data-del="${v.vehicle_id}" data-reg="${esc(v.reg_number)}">Delete</button>`, 1]], vs, "No vehicles yet.")}</div>
+  <div class="card"><h3>${ed ? "Edit " + esc(ed.reg_number) : "Add a vehicle"}</h3><div class="row"><label>Registration no.<input id="r" maxlength="15" placeholder="MH12AB1234" value="${ed ? esc(ed.reg_number) : ""}"></label>
   <label>Type<select id="t"><option value="CAR">Car</option><option value="TWO_WHEELER">Two-wheeler</option></select></label>
-  <label><span>EV</span><input id="ev" type="checkbox"></label><label><span>Accessible permit</span><input id="ac" type="checkbox"></label><button id="go">Add</button></div></div>`;
-  $("#go").onclick = async () => { if (await act(() => api("/vehicles", "POST", {reg_number: $("#r").value, vehicle_type: $("#t").value, is_ev: $("#ev").checked, has_accessible_permit: $("#ac").checked}), "Vehicle added.")) vehicles(el); };
+  <label><span>EV</span><input id="ev" type="checkbox" ${ed && ed.is_ev ? "checked" : ""}></label><label><span>Accessible permit</span><input id="ac" type="checkbox" ${ed && ed.has_accessible_permit ? "checked" : ""}></label>
+  <button id="go">${ed ? "Save changes" : "Add"}</button>${ed ? `<button id="cancel" class="sec">Cancel</button>` : ""}</div></div>`;
+  if (ed) $("#t").value = ed.vehicle_type;
+  el.querySelectorAll("[data-edit]").forEach(b => b.onclick = () => vehicles(el, +b.dataset.edit));
+  el.querySelectorAll("[data-del]").forEach(b => b.onclick = async () => {
+    if (!confirm(`Delete vehicle ${b.dataset.reg}?`)) return;
+    if (await act(() => api("/vehicles/" + b.dataset.del, "DELETE"), r => r.message)) vehicles(el);
+  });
+  if ($("#cancel")) $("#cancel").onclick = () => vehicles(el);
+  $("#go").onclick = async () => {
+    const body = {reg_number: $("#r").value, vehicle_type: $("#t").value, is_ev: $("#ev").checked, has_accessible_permit: $("#ac").checked};
+    const r = await act(() => ed ? api("/vehicles/" + ed.vehicle_id, "PUT", body) : api("/vehicles", "POST", body), r => ed ? r.message : "Vehicle added.");
+    if (r) vehicles(el);
+  };
 }
 async function find(el) {
   const vs = await api("/vehicles"); const n = new Date();
@@ -90,9 +104,9 @@ async function find(el) {
     const rec = await act(() => api(`/recommend?vehicle_id=${$("#v").value}&start=${$("#s").value}&end=${$("#e").value}`));
     if (!rec) return;
     $("#res").innerHTML = `<div class="card">${table([["Slot", s => s.slot_code], ["Zone", s => s.zone_name], ["Score", s => Number(s.score).toFixed(3)], ["Why this slot", s => s.reason],
-      ["", s => `<button data-id="${s.slot_id}" data-sc="${s.score}" data-re="${esc(s.reason)}">Reserve</button>`, 1]], rec, "No slot fits this vehicle and time.")}</div>`;
+      ["", s => `<button data-id="${s.slot_id}">Reserve</button>`, 1]], rec, "No slot fits this vehicle and time.")}</div>`;
     el.querySelectorAll("#res button").forEach(b => b.onclick = async () => {
-      const r = await act(() => api("/reservations", "POST", {vehicle_id: +$("#v").value, slot_id: +b.dataset.id, start: $("#s").value, end: $("#e").value, alloc_score: +b.dataset.sc, alloc_reason: b.dataset.re}), "Reserved!");
+      const r = await act(() => api("/reservations", "POST", {vehicle_id: +$("#v").value, slot_id: +b.dataset.id, start: $("#s").value, end: $("#e").value}), "Reserved!");
       if (r) location.hash = "reservations";
     });
   };
@@ -137,21 +151,28 @@ async function parking(el) {
 
 // ---------- admin ----------
 async function admin(el) {
-  const [tf, sl, vi, au] = await Promise.all([api("/admin/tariffs"), api("/slots"), api("/admin/violations"), api("/admin/audit")]);
+  const [tf, sl, vi, au, us] = await Promise.all([api("/admin/tariffs"), api("/slots"), api("/admin/violations"), api("/admin/audit"), api("/admin/users")]);
+  const vSorted = vi.slice().sort((a, b) => (a.status === "OPEN" ? 0 : 1) - (b.status === "OPEN" ? 0 : 1));
   el.innerHTML = `<div class="card"><h3>Tariffs</h3><table><tr><th>Type</th><th>Premium</th><th>₹/hour</th><th>Grace min</th><th>Min charge</th><th>Daily cap</th><th>Fine/hour</th><th></th></tr>${tf.map(t => `<tr data-t="${t.tariff_id}">
-    <td>${t.vehicle_type}</td><td>${t.is_premium ? "Yes" : "No"}</td>${["hourly_rate", "grace_minutes", "min_charge", "daily_cap", "overstay_fine_per_hour"].map(k => `<td><input size="5" data-k="${k}" value="${t[k] ?? ""}"></td>`).join("")}<td><button>Save</button></td></tr>`).join("")}</table></div>
+    <td>${t.vehicle_type}</td><td>${t.is_premium ? "Yes" : "No"}</td>${["hourly_rate", "grace_minutes", "min_charge", "daily_cap", "overstay_fine_per_hour"].map(k => `<td><input size="5" maxlength="8" inputmode="decimal" data-k="${k}" value="${t[k] ?? ""}"></td>`).join("")}<td><button>Save</button></td></tr>`).join("")}</table></div>
   <div class="card"><h3>Slot maintenance</h3><div class="row"><label>Slot<select id="sid">${sl.map(s => `<option value="${s.slot_id}">${esc(s.slot_code)} (${s.live_status})</option>`).join("")}</select></label>
   <button id="mt">Set maintenance</button><button id="av" class="sec">Set available</button><button id="jobs" class="sec">Run no-show / overstay / snapshot jobs now</button></div></div>
-  <div class="card"><h3>Violations</h3><div class="row"><label>Session no.<input id="vs" size="6"></label><label>Type<select id="vt"><option>OVERSTAY</option><option>WRONG_SLOT</option><option>UNAUTHORIZED_BAY</option></select></label>
-  <label>Fine<input id="vf" size="5" value="0"></label><label>Notes<input id="vn"></label><button id="vb">Log violation</button></div>
-  ${table([["#", v => v.violation_id], ["Vehicle", v => v.reg_number], ["Type", v => v.violation_type], ["Fine", v => money(v.fine_amount)], ["Status", v => v.status], ["When", v => v.detected_at], ["Notes", v => v.notes || ""]], vi.slice(0, 15))}</div>
+  <div class="card"><h3>Violations <span class="mut">(open ones first)</span></h3><div class="row"><label>Session no.<input id="vs" size="6"></label><label>Type<select id="vt"><option>OVERSTAY</option><option>WRONG_SLOT</option><option>UNAUTHORIZED_BAY</option></select></label>
+  <label>Fine<input id="vf" size="5" value="0"></label><label>Notes<input id="vn" maxlength="255"></label><button id="vb">Log violation</button></div>
+  ${table([["#", v => v.violation_id], ["Vehicle", v => v.reg_number], ["Type", v => v.violation_type], ["Fine", v => money(v.fine_amount)], ["Status", v => v.status], ["When", v => v.detected_at], ["Notes", v => v.notes || ""],
+    ["", v => v.status === "OPEN" ? `<button data-vs="${v.violation_id}" data-to="PAID">Mark paid</button> <button class="sec" data-vs="${v.violation_id}" data-to="WAIVED">Waive</button>` : "", 1]], vSorted.slice(0, 20))}</div>
+  <div class="card"><h3>Users <span class="mut">(${us.length})</span></h3><div class="scroll">${table([["#", u => u.user_id], ["Name", u => u.full_name], ["Email", u => u.email], ["Phone", u => u.phone || ""], ["Role", u => u.role], ["Vehicles", u => u.vehicles], ["Joined", u => u.created_at]], us)}</div></div>
   <div class="card"><h3>Audit log (latest)</h3>${table([["When", a => a.created_at], ["Who", a => a.actor || "system"], ["Action", a => a.action], ["Entity", a => a.entity + " #" + a.entity_id], ["Old", a => a.old_value || ""], ["New", a => a.new_value || ""]], au.slice(0, 15))}</div>`;
   el.querySelectorAll("tr[data-t] button").forEach(b => b.onclick = async () => {
     const tr = b.closest("tr"), body = {tariff_id: +tr.dataset.t}; tr.querySelectorAll("input").forEach(i => body[i.dataset.k] = i.value);
-    if (await act(() => api("/admin/tariffs", "PUT", body), "Tariff saved.")) admin(el);
+    if (await act(() => api("/admin/tariffs", "PUT", body), r => r.message)) admin(el);
   });
   const setSlot = st => async () => { if (await act(() => api(`/admin/slots/${$("#sid").value}/status`, "PUT", {status: st}), "Slot updated.")) admin(el); };
   $("#mt").onclick = setSlot("MAINTENANCE"); $("#av").onclick = setSlot("AVAILABLE");
+  el.querySelectorAll("[data-vs]").forEach(b => b.onclick = async () => {
+    if (b.dataset.to === "WAIVED" && !confirm("Waive this fine? This cannot be undone.")) return;
+    if (await act(() => api(`/admin/violations/${b.dataset.vs}/status`, "PUT", {status: b.dataset.to}), r => r.message)) admin(el);
+  });
   $("#jobs").onclick = () => act(() => api("/admin/run-jobs", "POST"), r => r.message);
   $("#vb").onclick = async () => { if (await act(() => api("/admin/violations", "POST", {session_id: $("#vs").value, violation_type: $("#vt").value, fine_amount: $("#vf").value, notes: $("#vn").value}), "Violation logged.")) admin(el); };
 }

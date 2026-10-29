@@ -18,3 +18,4 @@ table{border-collapse:collapse;width:100%}th,td{text-align:left;padding:6px 8px;
 #toast{position:fixed;right:12px;bottom:12px;z-index:9;max-width:340px}.t{padding:10px 14px;margin-top:8px;border-radius:8px;color:#fff;background:var(--ok)}.t.err{background:var(--bad)}
 .pill{display:inline-block;padding:1px 8px;border-radius:99px;font-size:12px;background:var(--line);margin-left:3px}.mut{color:var(--mut)}
 .heat td{text-align:center;padding:3px;font-size:11px;border:1px solid var(--card)}
+.scroll{max-height:320px;overflow:auto}

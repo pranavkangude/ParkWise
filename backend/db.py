@@ -1,4 +1,5 @@
 """One pooled connection per request. Always parameterised queries (Architecture.md section 10)."""
+from contextlib import contextmanager
 import mysql.connector
 from mysql.connector import pooling
 from flask import g
@@ -43,6 +44,26 @@ def execute(sql, params=()):
         return cur.lastrowid, cur.rowcount
     finally:
         cur.close()
+
+@contextmanager
+def transaction():
+    """Several statements as one unit: all are saved, or none (used where Flask itself writes two tables).
+
+        with db.transaction() as cur:
+            cur.execute(...); cur.execute(...)
+    """
+    c = conn()
+    c.autocommit = False
+    cur = c.cursor()
+    try:
+        yield cur
+        c.commit()
+    except Exception:
+        c.rollback()
+        raise
+    finally:
+        cur.close()
+        c.autocommit = True
 
 def call(name, args=()):
     """Call a stored procedure. Returns (out_args_tuple, list_of_result_sets_as_dicts)."""

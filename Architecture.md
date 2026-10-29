@@ -162,7 +162,7 @@ Base path `/api`. All bodies are JSON. Errors: `{"error": "<message from SIGNAL 
 | Method + path | Role | Calls | Owner |
 |---|---|---|---|
 | `POST /auth/register`, `POST /auth/login`, `POST /auth/logout`, `GET /me` | public / any | `users` | M2 |
-| `GET/POST /vehicles` | user | `vehicles` | M2 |
+| `GET/POST /vehicles`, `PUT/DELETE /vehicles/<id>` | user | `vehicles` | M2 / M3 |
 | `GET /slots` | any | `v_slot_live_status` | M2 |
 | `GET /zones/occupancy` | any | `v_zone_occupancy` | M2 |
 | `GET /recommend?vehicle_id&start&end` | user | `sp_recommend_slots` | M2 |
@@ -175,6 +175,7 @@ Base path `/api`. All bodies are JSON. Errors: `{"error": "<message from SIGNAL 
 | `GET /bills/<session_id>`, `GET /bills/unpaid` | user/admin | `v_itemized_bill`, `v_unpaid_bills` | M2 |
 | `POST /payments` | user | `sp_record_payment` | M2 |
 | `GET/PUT /admin/tariffs`, `PUT /admin/slots/<id>/status`, `GET/POST /admin/violations`, `GET /admin/audit` | admin | tables, `sp_log_violation`, `audit_logs` | M2 |
+| `GET /admin/users`, `PUT /admin/violations/<id>/status` | admin | `users`, `violations`, `audit_logs` | M3 |
 | `GET /analytics/summary`, `/revenue`, `/hourly-demand`, `/forecast`, `/carbon` | admin | `v_daily_revenue`, `v_hourly_demand`, `v_occupancy_forecast`, `v_carbon_estimate` | M1 |
 
 ## 9. Folder structure
