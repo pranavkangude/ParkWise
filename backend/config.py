@@ -16,3 +16,9 @@ DB = dict(
     database=os.getenv("PW_DB_NAME", "parkwise"),
 )
 SECRET_KEY = os.getenv("PW_SECRET_KEY", "change-me-for-real-use")
+
+# Failed-login limit (Member 3, task 3): this many wrong passwords per e-mail within this many minutes.
+LOGIN_MAX_FAILS = int(os.getenv("PW_LOGIN_MAX_FAILS", "5"))
+LOGIN_WINDOW_MIN = int(os.getenv("PW_LOGIN_WINDOW_MIN", "15"))
+# Largest request body the API accepts (bytes).
+MAX_BODY_BYTES = int(os.getenv("PW_MAX_BODY_BYTES", "65536"))

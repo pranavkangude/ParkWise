@@ -1,8 +1,31 @@
-backend/.env
+# secrets
 .env
+backend/.env
+*.env
+!.env.example
+!backend/.env.example
+
+# python
 __pycache__/
-*.pyc
+*.py[cod]
 venv/
 .venv/
+env/
+.pytest_cache/
+
+# editors and OS
 .vscode/
+.vs/
+.idea/
+Thumbs.db
+Desktop.ini
+.DS_Store
+
+# logs and local files
 *.log
+*.pdf
+*.zip
+~$*
+
+# test screenshots (keep them in your report, not in git)
+screenshots/

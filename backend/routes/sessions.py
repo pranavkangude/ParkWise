@@ -1,6 +1,7 @@
-from flask import Blueprint, request, jsonify, session
+from flask import Blueprint, jsonify, session
 import db
 from auth import login_required, is_admin, need, owns_vehicle, owns_session
+from validate import json_body
 from .util import to_int
 
 bp = Blueprint("sessions", __name__)
@@ -8,7 +9,7 @@ bp = Blueprint("sessions", __name__)
 @bp.post("/sessions/entry")
 @login_required
 def entry():
-    d = request.get_json(silent=True) or {}
+    d = json_body()
     need(d, "vehicle_id", "slot_id")
     vid, sid = to_int(d["vehicle_id"], "vehicle_id"), to_int(d["slot_id"], "slot_id")
     owns_vehicle(vid)

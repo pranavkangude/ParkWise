@@ -1,8 +1,10 @@
 """ParkWise Flask app. Run:  python app.py   then open http://127.0.0.1:5000"""
 import os, datetime, decimal
-from flask import Flask, send_from_directory
+from urllib.parse import urlparse
+from flask import Flask, request, send_from_directory
 from flask.json.provider import DefaultJSONProvider
 import config, db, errors
+from errors import ApiError
 
 class Json(DefaultJSONProvider):
     @staticmethod
@@ -20,7 +22,8 @@ def create_app():
     app = Flask(__name__, static_folder=static, static_url_path="/static")
     app.json = Json(app)
     app.secret_key = config.SECRET_KEY
-    app.config.update(SESSION_COOKIE_HTTPONLY=True, SESSION_COOKIE_SAMESITE="Lax")
+    app.config.update(SESSION_COOKIE_HTTPONLY=True, SESSION_COOKIE_SAMESITE="Lax",
+                      MAX_CONTENT_LENGTH=config.MAX_BODY_BYTES)
     app.teardown_appcontext(db.close_conn)
     errors.register(app)
 
@@ -28,6 +31,30 @@ def create_app():
     from routes import vehicles, slots, reservations, sessions, billing, admin, analytics
     for m in (auth, vehicles, slots, reservations, sessions, billing, admin, analytics):
         app.register_blueprint(m.bp, url_prefix="/api")
+
+    # Safety net (Decision D-19): every /api/admin/* and /api/analytics/* route must carry @admin_required.
+    for rule in app.url_map.iter_rules():
+        if rule.rule.startswith(("/api/admin/", "/api/analytics/")):
+            if not getattr(app.view_functions[rule.endpoint], "admin_guard", False):
+                raise RuntimeError(f"Route {rule.rule} is missing @admin_required")
+
+    @app.before_request
+    def block_cross_site_writes():
+        """CSRF defence in addition to SameSite=Lax: a browser always sends Origin on POST/PUT/DELETE.
+        If it names another site, refuse. Scripts and tests send no Origin and are not affected."""
+        if request.method in ("POST", "PUT", "PATCH", "DELETE"):
+            origin = request.headers.get("Origin")
+            if origin is not None and urlparse(origin).netloc != request.host:
+                raise ApiError("Cross-site request blocked.", 403)
+
+    @app.after_request
+    def security_headers(resp):
+        resp.headers.setdefault("X-Content-Type-Options", "nosniff")
+        resp.headers.setdefault("X-Frame-Options", "DENY")
+        resp.headers.setdefault("Referrer-Policy", "same-origin")
+        if request.path.startswith("/api/"):
+            resp.headers["Cache-Control"] = "no-store"      # private data must not be re-shown from the browser cache
+        return resp
 
     @app.get("/")
     def home():

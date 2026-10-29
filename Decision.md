@@ -95,6 +95,30 @@ Multi-lot, real payment gateway, sensors / gates / cameras, machine learning, mo
 - **Environment note:** all of the above passed on MariaDB 10.11 (the MySQL-compatible server available while writing this), also with binary logging ON, which is MySQL 8's default and enforces the function-characteristic and generated-column rules. It was not run on MySQL 8.0 itself, so run it there before relying on it.
 - **Re-run rule:** `tests.sql` changes data. Reload `schema.sql` + `seed.sql` before each run.
 
+## D-19 Security hardening (Member 3)
+- **Failed logins:** 5 wrong passwords per e-mail within 15 minutes lock that e-mail for the rest of the window (HTTP 429 with `Retry-After`). A success clears the count. Unknown e-mails count too, so the answer never reveals who has an account. The limits are `PW_LOGIN_MAX_FAILS` and `PW_LOGIN_WINDOW_MIN` in `.env`.
+- **Limit of the limiter:** the counter lives in the Flask process (restart clears it) and is per e-mail, not per IP. Someone who knows an e-mail can lock that account for 15 minutes. Accepted for a single-process course project. A production system would keep the counter in the database or Redis and add per-IP limits.
+- **Input limits:** every text and number input is checked in `backend/validate.py` (types, lengths, ranges); body size is capped at 64 KB. Wrong types give 400 instead of a 500 crash.
+- **Admin guard:** `@admin_required` marks the function. `app.py` refuses to start if any `/api/admin/*` or `/api/analytics/*` route lacks the mark, and `tests_security.py` repeats the check.
+- **CSRF:** `SameSite=Lax` stays, and we add an `Origin` check on POST, PUT and DELETE. A browser always sends `Origin` on those methods, so a request from another site is refused (403). Why this is enough here: the cookie is `HttpOnly` and `Lax`, so browsers do not send it on cross-site POSTs, and the Origin check covers same-site cases such as another port on localhost. Why not a token: it would force a change to every client, including `tests_api.py`, `simulate.py` and the Postman collection. Limit: a client that sends no `Origin` (curl, Postman) is allowed, which is fine because those are not browsers carrying a victim's cookie.
+- **Other:** `X-Content-Type-Options`, `X-Frame-Options: DENY`, `Referrer-Policy`, and `Cache-Control: no-store` on every `/api` answer (so the Back button after logout does not show private data). Deadlock and lock-timeout errors now give a readable message (409 and 503).
+
+## D-20 Allocation score is computed by the server
+- `POST /reservations` used to store the `alloc_score` and `alloc_reason` sent by the browser, so a user could write any score into the table.
+- Now Flask ignores both fields, calls `sp_recommend_slots` for the same vehicle and window, and stores the score and reason of the chosen slot. If the slot is not among the top 5, both stay NULL. The request fields are still accepted so old clients do not break.
+
+## D-21 Vehicle edit and delete rules
+- **Edit:** type, EV flag and permit decide which slots a vehicle may use, so they cannot change while it has an ACTIVE session or a PENDING/ACTIVE reservation (409). The check is inside the UPDATE statement itself, which leaves no gap for a race. The plate can always be corrected.
+- **Delete:** only a vehicle with no reservations (any status), sessions or violations. Bills and fines are history and must stay. The foreign-key error 1451 is also mapped to 409 as a safety net.
+
+## D-22 Settling violations, and where this audit row comes from
+- `PUT /admin/violations/<id>/status` moves OPEN to PAID or WAIVED, one way only. The `UPDATE ... WHERE status='OPEN'` makes a second attempt a clean 409.
+- **Audit:** Flask writes the `VIOLATION_RESOLVE` row in the same transaction as the update (`db.transaction()`), because there is no audit trigger on `violations`. This is a small exception to D-16 (audit by triggers). **Proposal for the group:** add `trg_violations_au` to `schema.sql` so the audit also holds for raw SQL. We did not do it here because it changes the schema contract and needs the group to agree and reload the database.
+
+## D-23 Saving a tariff with the same values
+- MySQL reports 0 changed rows for an identical UPDATE, which used to look like "not found" (404). Flask now reads the tariff first: unknown id is 404, identical values are 200 with `"changed": false`, and nothing is written (so no empty audit row either).
+- Tariff numbers are validated: rate 0.01 to 9999, grace 0 to 1440 whole minutes, charges 0 to 9999, cap 0 to 99999 and not below the minimum charge.
+
 ## Open items for the group
 1. Pick and cite the CO₂ emission factor (D-10).
 2. Confirm tariff values (`seed.sql`), or keep the demo values (car Rs 30/h, premium Rs 50/h, bike Rs 10/h).
