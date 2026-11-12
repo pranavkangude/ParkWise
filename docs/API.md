@@ -1439,7 +1439,7 @@ Response `201`:
 ### Settle a violation: `PUT /api/admin/violations/{id}/status`
 
 - **Who:** Admin only
-- **Uses:** UPDATE on `violations`, plus an `audit_logs` row (action `VIOLATION_RESOLVE`) saved in the same transaction
+- **Uses:** UPDATE on `violations`, and the audit row `VIOLATION_RESOLVE` is written by trigger `trg_violations_au` in the same statement
 
 Moves an OPEN violation to PAID (fine collected) or WAIVED (forgiven). It is one-way: a violation that is already PAID or WAIVED cannot be changed again.
 

@@ -357,6 +357,18 @@ BEGIN
                       'overstay_fine_per_hour', NEW.overstay_fine_per_hour));
 END$$
 
+-- Audit: settling a violation (OPEN -> PAID / WAIVED)
+CREATE TRIGGER trg_violations_au AFTER UPDATE ON violations
+FOR EACH ROW
+BEGIN
+  IF OLD.status <> NEW.status THEN
+    INSERT INTO audit_logs (actor_user_id, action, entity, entity_id, old_value, new_value)
+    VALUES (@app_user_id, 'VIOLATION_RESOLVE', 'violations', NEW.violation_id,
+            JSON_OBJECT('status', OLD.status),
+            JSON_OBJECT('status', NEW.status, 'fine_amount', NEW.fine_amount));
+  END IF;
+END$$
+
 -- ===== Procedures ===================================================
 
 -- Eligibility rules shared by reservation and entry (signals on failure)

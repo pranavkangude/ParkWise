@@ -92,15 +92,9 @@ def resolve_violation(vid):
     new = d.get("status")
     if new not in ("PAID", "WAIVED"):
         raise ApiError("status must be PAID or WAIVED.")
-    with db.transaction() as cur:                          # the update and its audit row are saved together
-        cur.execute("UPDATE violations SET status=%s WHERE violation_id=%s AND status='OPEN'", (new, vid))
-        changed = cur.rowcount
-        if changed:
-            cur.execute("""INSERT INTO audit_logs (actor_user_id, action, entity, entity_id, old_value, new_value)
-                           VALUES (%s, 'VIOLATION_RESOLVE', 'violations', %s, JSON_OBJECT('status', 'OPEN'),
-                                   JSON_OBJECT('status', %s, 'fine_amount',
-                                               (SELECT fine_amount FROM violations WHERE violation_id = %s)))""",
-                        (session["uid"], vid, new, vid))
+    # The audit row is written by trigger trg_violations_au (D-22); audited() tells MySQL who the admin is.
+    _, changed = audited(lambda: db.execute(
+        "UPDATE violations SET status=%s WHERE violation_id=%s AND status='OPEN'", (new, vid)))
     if not changed:
         row = db.one("SELECT status FROM violations WHERE violation_id = %s", (vid,))
         if not row:

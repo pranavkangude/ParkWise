@@ -6,15 +6,15 @@ DBMS course project · MySQL 8 · Flask · HTML/CSS/JS · Single parking lot, mu
 
 | File | Purpose |
 |---|---|
-| `schema.sql` | Final schema: 12 tables, 3 functions, 12 procedures, 7 triggers, 9 views, 3 scheduled events |
+| `schema.sql` | Final schema: 12 tables, 3 functions, 12 procedures, 8 triggers, 9 views, 3 scheduled events |
 | `seed.sql` | Reference data (4 zones, 24 slots, 3 tariffs, settings), 7 users, 14 vehicles, 30 days of synthetic history |
-| `tests.sql` | 71 automated SQL checks (billing, entry/exit, reservations, scheduler jobs, constraints, audit) |
+| `tests.sql` | 74 automated SQL checks (billing, entry/exit, reservations, scheduler jobs, constraints, audit) |
 | `tests_concurrency.py` | Parallel double-booking / double-entry test |
 | `Architecture.md` | Layers, ER diagram, data dictionary, API contract, folder structure |
 | `Workflow.md` | Business flows, state machines, team workflow, demo script |
 | `Decision.md` | Every design decision with reasons, limitations and open items |
 
-**Test status.** Verified on MariaDB 10.11, the MySQL-compatible server available while this package was prepared, including a run with binary logging ON (MySQL 8's default). Results: `schema.sql` and `seed.sql` load with no errors, all 71 checks in `tests.sql` pass, `tests_concurrency.py` ends with `RESULT: PASS`, the `ev_release_no_shows` event fired by itself with the scheduler ON, the two-terminal demo in Workflow.md Part C behaves as described, and every demo login in §4 matches its password. It was **not** run on MySQL 8.0. The syntax is MySQL 8 syntax, but run `schema.sql`, `seed.sql`, `tests.sql` and `tests_concurrency.py` on your own MySQL 8 first. If anything fails, copy the exact error text into the group chat.
+**Test status.** Verified on MariaDB 10.11, the MySQL-compatible server available while this package was prepared, including a run with binary logging ON (MySQL 8's default). Results: `schema.sql` and `seed.sql` load with no errors, all 74 checks in `tests.sql` pass, `tests_concurrency.py` ends with `RESULT: PASS`, the `ev_release_no_shows` event fired by itself with the scheduler ON, the two-terminal demo in Workflow.md Part C behaves as described, and every demo login in §4 matches its password. It was **not** run on MySQL 8.0. The syntax is MySQL 8 syntax, but run `schema.sql`, `seed.sql`, `tests.sql` and `tests_concurrency.py` on your own MySQL 8 first. If anything fails, copy the exact error text into the group chat.
 
 ## 2. Final feature list
 
@@ -28,7 +28,7 @@ DBMS course project · MySQL 8 · Flask · HTML/CSS/JS · Single parking lot, mu
 | F4 | Vehicle entry / exit sessions (simulated by buttons) | `sp_vehicle_entry`, `sp_vehicle_exit` + triggers |
 | F5 | Automatic billing (grace, hourly blocks, minimum charge, daily cap) | `fn_calc_amount`, `fn_billable_minutes` |
 | F6 | Payments with simulated failure and retry | `sp_record_payment` |
-| F7 | Admin: slots, maintenance, tariffs, users | Flask + `trg_slots_*`, `trg_tariff_au` |
+| F7 | Admin: slots, maintenance, tariffs, users | Flask + `trg_slots_*`, `trg_tariff_au`, `trg_violations_au` |
 | F8 | Violations log (overstay, no-show, wrong slot, unauthorized bay) | `violations`, `sp_log_violation` |
 | F9 | Audit log of admin changes (who changed what, old and new values) | `audit_logs`, `@app_user_id` |
 | F10 | Reports: daily revenue, hourly demand, unpaid bills, itemized bill | `v_daily_revenue`, `v_hourly_demand`, `v_unpaid_bills`, `v_itemized_bill` |
@@ -66,7 +66,7 @@ Full ER diagram and data dictionary: `Architecture.md` §4.
 1. Install MySQL Server 8.0 and MySQL Workbench. Install Python 3.11+ and VS Code.
 2. Turn on the event scheduler. Workbench → `SET GLOBAL event_scheduler = ON;` (lasts until restart). For a permanent setting, add `event_scheduler=ON` under `[mysqld]` in `C:\ProgramData\MySQL\MySQL Server 8.0\my.ini` and restart the `MySQL80` service from an Administrator prompt.
 3. Load the database. In Workbench use File → Open SQL Script, run `schema.sql`, then `seed.sql`. Or in a terminal: `mysql -u root -p`, then `source C:/path/to/schema.sql;` and `source C:/path/to/seed.sql;`. PowerShell does not support `<` redirection.
-4. Run the tests: `source tests.sql;` should show `PASS | 71` and an empty "non-PASS" list. The tests change data, so reload `schema.sql` + `seed.sql` before every re-run (a second run on dirty data reports false FAILs). Then reload schema and seed again, and run `python tests_concurrency.py --user root --password <pwd>` (after `pip install mysql-connector-python`). It should end with `RESULT: PASS`.
+4. Run the tests: `source tests.sql;` should show `PASS | 74` and an empty "non-PASS" list. The tests change data, so reload `schema.sql` + `seed.sql` before every re-run (a second run on dirty data reports false FAILs). Then reload schema and seed again, and run `python tests_concurrency.py --user root --password <pwd>` (after `pip install mysql-connector-python`). It should end with `RESULT: PASS`.
 5. Demo logins: `admin@parkwise.test` / `Admin@123`, and students such as `aarav@parkwise.test` / `Student@123`. These are demo credentials only.
 
 ## 5. Work split — 3 members
