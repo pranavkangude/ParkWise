@@ -148,6 +148,13 @@ UPDATE tariff_rules SET hourly_rate = 30.00 WHERE tariff_id = 1;
 CALL t_run('T09g CHECK: rate must be positive', 'UPDATE tariff_rules SET hourly_rate = 0 WHERE tariff_id = 1', 'chk_tariff_rate');
 CALL t_run('T09h UNIQUE: duplicate registration number', 'INSERT INTO vehicles (user_id,reg_number,vehicle_type) VALUES (2,''MH12AB1001'',''CAR'')', 'Duplicate entry');
 CALL t_run('T09i FK: vehicle with unknown owner', 'INSERT INTO vehicles (user_id,reg_number,vehicle_type) VALUES (999,''MH00XX0000'',''CAR'')', 'foreign key');
+CALL t_run('T09j create a test violation', 'INSERT INTO violations (vehicle_id, session_id, violation_type, fine_amount) SELECT vehicle_id, session_id, ''WRONG_SLOT'', 20 FROM parking_sessions LIMIT 1', NULL);
+SET @app_user_id = 1;
+CALL t_run('T09k settle it with raw SQL', 'UPDATE violations SET status=''WAIVED'' WHERE violation_type=''WRONG_SLOT'' AND status=''OPEN'' ORDER BY violation_id DESC LIMIT 1', NULL);
+CALL t_assert('T09l violation settle audited by trigger, with actor',
+  (SELECT COUNT(*) FROM audit_logs WHERE action = 'VIOLATION_RESOLVE' AND actor_user_id = 1
+      AND JSON_UNQUOTE(JSON_EXTRACT(old_value,'$.status')) = 'OPEN'
+      AND JSON_UNQUOTE(JSON_EXTRACT(new_value,'$.status')) = 'WAIVED') = 1);
 
 -- T10 snapshot + views ---------------------------------------------------------------
 CALL t_run('T10a snapshot procedure', 'CALL sp_take_snapshot(NULL)', NULL);
