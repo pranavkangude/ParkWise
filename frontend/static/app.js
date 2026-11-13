@@ -4,21 +4,36 @@ const esc = v => String(v ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt
 let me = null, timer = null, charts = [];
 
 async function api(path, method = "GET", body) {
-  const r = await fetch("/api" + path, {method, headers: body ? {"Content-Type": "application/json"} : {}, body: body ? JSON.stringify(body) : undefined});
+  let r;
+  try { r = await fetch("/api" + path, {method, headers: body ? {"Content-Type": "application/json"} : {}, body: body ? JSON.stringify(body) : undefined}); }
+  catch { throw new Error("Cannot reach the server. Check that the app is running, then try again."); }
   const data = await r.json().catch(() => ({}));
   if (!r.ok) { const e = new Error(data.error || "Request failed"); e.status = r.status; throw e; }
   return data;
 }
-function toast(msg, err) { const d = document.createElement("div"); d.className = "t" + (err ? " err" : ""); d.textContent = msg; $("#toast").append(d); setTimeout(() => d.remove(), 4500); }
-async function act(fn, ok) { try { const r = await fn(); if (ok) toast(typeof ok === "function" ? ok(r) : ok); return r; } catch (e) { toast(e.message, true); } }
+function toast(msg, err) { const d = document.createElement("div"); d.className = "t" + (err ? " err" : ""); d.textContent = msg; $("#toast").append(d); setTimeout(() => d.remove(), err ? 7000 : 4500); }
+// Runs one request for a button click: the button shows a spinner and is disabled meanwhile,
+// success gives a toast, an error gives a toast AND a message that stays inside the form's card.
+async function act(fn, ok) {
+  const ev = window.event, btn = ev && ev.currentTarget instanceof HTMLButtonElement ? ev.currentTarget : null;
+  const card = btn ? btn.closest(".card") : null;
+  if (card) card.querySelectorAll(":scope > p.err[data-form]").forEach(p => p.remove());
+  if (btn) { btn.disabled = true; btn.classList.add("busy"); }
+  try { const r = await fn(); if (ok) toast(typeof ok === "function" ? ok(r) : ok); return r; }
+  catch (e) {
+    toast(e.message, true);
+    if (card) card.insertAdjacentHTML("beforeend", `<p class="err" role="alert" data-form>${esc(e.message)}</p>`);
+  } finally { if (btn) { btn.disabled = false; btn.classList.remove("busy"); } }
+}
 const money = v => "₹" + Number(v ?? 0).toFixed(2);
 const dtl = d => { const p = n => String(n).padStart(2, "0"); return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`; };
 function table(cols, data, empty = "Nothing to show.") {
-  if (!data.length) return `<p class="mut">${empty}</p>`;
-  return `<table><tr>${cols.map(c => `<th>${esc(c[0])}</th>`).join("")}</tr>` +
+  if (!data.length) return `<div class="empty">${empty}</div>`;
+  return `<table><tr>${cols.map(c => `<th scope="col">${esc(c[0])}</th>`).join("")}</tr>` +
     data.map(r => `<tr>${cols.map(c => `<td>${c[2] ? c[1](r) : esc(c[1](r))}</td>`).join("")}</tr>`).join("") + `</table>`;
 }
 
+const SHORT = {AVAILABLE: "free", OCCUPIED: "busy", RESERVED: "booked", MAINTENANCE: "maint."};
 const routes = {
   "": {t: "Live board", f: board}, board: {t: "Live board", f: board},
   find: {t: "Find a slot", f: find, auth: 1}, vehicles: {t: "My vehicles", f: vehicles, auth: 1},
@@ -44,9 +59,17 @@ async function render() {
   if (key === "logout") { await act(() => api("/auth/logout", "POST")); me = null; location.hash = "board"; return render(); }
   const v = $("#view");
   if ((r.auth || r.admin) && !me) { location.hash = "login"; return; }
-  if (r.admin && me.role !== "ADMIN") { v.innerHTML = "<p>Admin only.</p>"; return; }
-  v.innerHTML = `<h2>${r.t}</h2><div id="page">Loading…</div>`;
-  try { await r.f($("#page")); } catch (e) { $("#page").innerHTML = `<p class="err">${esc(e.message)}</p>`; }
+  if (r.admin && me.role !== "ADMIN") { document.title = "Admin only · ParkWise"; v.innerHTML = "<p>Admin only.</p>"; return; }
+  document.title = r.t + " · ParkWise";
+  v.innerHTML = `<h2 tabindex="-1">${r.t}</h2><div id="page" aria-busy="true"><p class="mut" role="status"><span class="spin"></span>Loading…</p></div>`;
+  $("h2", v).focus({preventScroll: true});
+  try { await r.f($("#page")); }
+  catch (e) {
+    if (e.status === 401 && me) { me = null; toast("Your session ended. Please log in again.", true); location.hash = "login"; return; }
+    $("#page").innerHTML = `<p class="err" role="alert">${esc(e.message)}</p><p><button class="sec" id="retry">Try again</button></p>`;
+    $("#retry").onclick = render;
+  }
+  const pg = $("#page"); if (pg) pg.removeAttribute("aria-busy");
 }
 
 // ---------- public ----------
@@ -54,19 +77,22 @@ async function board(el) {
   const draw = async () => {
     const [zones, slots] = await Promise.all([api("/zones/occupancy"), api("/slots")]);
     el.innerHTML = `<div class="tiles">${zones.map(z => `<div class="tile"><span>Zone ${esc(z.zone_code)} · ${esc(z.zone_name)}</span><b>${z.available}/${z.total_slots} free</b><span>${z.occupied} occupied · ${z.reserved} reserved · ${z.maintenance} maint.</span></div>`).join("")}</div>
-    <p>${["AVAILABLE","OCCUPIED","RESERVED","MAINTENANCE"].map(s => `<span class="pill ${s}" style="color:#fff">${s}</span>`).join(" ")} <span class="mut">⚡ EV charger · ♿ accessible · ★ premium · refreshes every 10 s</span></p>` +
+    <p>${["AVAILABLE","OCCUPIED","RESERVED","MAINTENANCE"].map(s => `<span class="pill ${s}">${s}</span>`).join(" ")} <span class="mut">⚡ EV charger · ♿ accessible · ★ premium · refreshes every 10 s · </span><span id="upd" class="mut">updated ${new Date().toLocaleTimeString()}</span></p>` +
+    (slots.length ? "" : `<div class="empty">No parking slots are set up yet.</div>`) +
     [...new Set(slots.map(s => s.zone_code))].map(z => `<h3>Zone ${esc(z)}</h3><div class="grid">${slots.filter(s => s.zone_code === z).map(s =>
-      `<div class="slot ${s.live_status}" title="${esc(s.slot_type)} · ${s.distance_to_entrance_m} m from entrance"><b>${esc(s.slot_code)}</b>${s.slot_type === "CAR" ? "Car" : "Bike"} ${s.is_ev_charger ? "⚡" : ""}${s.is_accessible ? "♿" : ""}${s.is_premium ? "★" : ""}</div>`).join("")}</div>`).join("");
+      `<div class="slot ${s.live_status}" title="${esc(s.slot_type)} · ${s.distance_to_entrance_m} m from entrance"><b>${esc(s.slot_code)}</b>${s.slot_type === "CAR" ? "Car" : "Bike"} ${s.is_ev_charger ? "⚡" : ""}${s.is_accessible ? "♿" : ""}${s.is_premium ? "★" : ""}<small>${SHORT[s.live_status] || ""}</small></div>`).join("")}</div>`).join("");
   };
-  await draw(); timer = setInterval(() => draw().catch(() => {}), 10000);
+  await draw(); timer = setInterval(() => draw().catch(() => { const u = $("#upd"); if (u) { u.textContent = "connection problem, retrying…"; u.className = "warn"; } }), 10000);
 }
 function login(el) {
-  el.innerHTML = `<div class="card"><div class="row"><label>Email<input id="e" type="email" maxlength="120" autocomplete="username"></label><label>Password<input id="p" type="password" maxlength="128" autocomplete="current-password"></label><button id="go">Login</button></div>
+  el.innerHTML = `<div class="card"><form class="row" id="f"><label>Email<input id="e" type="email" maxlength="120" autocomplete="username"></label><label>Password<input id="p" type="password" maxlength="128" autocomplete="current-password"></label><button id="go">Login</button></form>
   <p class="mut">Demo: admin@parkwise.test / Admin@123 · aarav@parkwise.test / Student@123</p></div>`;
+  $("#f").onsubmit = e => e.preventDefault(); $("#e").focus();
   $("#go").onclick = async () => { const r = await act(() => api("/auth/login", "POST", {email: $("#e").value, password: $("#p").value})); if (r) { me = r; location.hash = "board"; render(); } };
 }
 function register(el) {
-  el.innerHTML = `<div class="card"><div class="row"><label>Full name<input id="n" maxlength="100" autocomplete="name"></label><label>Email<input id="e" type="email" maxlength="120" autocomplete="email"></label><label>Phone<input id="ph" maxlength="15" inputmode="numeric" autocomplete="tel"></label><label>Password (6+ characters)<input id="p" type="password" maxlength="128" autocomplete="new-password"></label><button id="go">Register</button></div></div>`;
+  el.innerHTML = `<div class="card"><form class="row" id="f"><label>Full name<input id="n" maxlength="100" autocomplete="name"></label><label>Email<input id="e" type="email" maxlength="120" autocomplete="email"></label><label>Phone<input id="ph" maxlength="15" inputmode="numeric" autocomplete="tel"></label><label>Password (6+ characters)<input id="p" type="password" maxlength="128" autocomplete="new-password"></label><button id="go">Register</button></form></div>`;
+  $("#f").onsubmit = e => e.preventDefault(); $("#n").focus();
   $("#go").onclick = async () => { const r = await act(() => api("/auth/register", "POST", {full_name: $("#n").value, email: $("#e").value, phone: $("#ph").value, password: $("#p").value}), "Registered. Please log in."); if (r) location.hash = "login"; };
 }
 
@@ -76,11 +102,12 @@ async function vehicles(el, editId = null) {
   const vs = await api("/vehicles");
   const ed = vs.find(v => v.vehicle_id === editId) || null;
   el.innerHTML = `<div class="card">${table([["Reg. number", v => v.reg_number], ["Type", v => v.vehicle_type], ["EV", v => v.is_ev ? "Yes" : "No"], ["Accessible permit", v => v.has_accessible_permit ? "Yes" : "No"],
-    ["", v => `<button class="sec" data-edit="${v.vehicle_id}">Edit</button> <button class="red" data-del="${v.vehicle_id}" data-reg="${esc(v.reg_number)}">Delete</button>`, 1]], vs, "No vehicles yet.")}</div>
-  <div class="card"><h3>${ed ? "Edit " + esc(ed.reg_number) : "Add a vehicle"}</h3><div class="row"><label>Registration no.<input id="r" maxlength="15" placeholder="MH12AB1234" value="${ed ? esc(ed.reg_number) : ""}"></label>
+    ["", v => `<button class="sec" data-edit="${v.vehicle_id}" aria-label="Edit ${esc(v.reg_number)}">Edit</button> <button class="red" data-del="${v.vehicle_id}" data-reg="${esc(v.reg_number)}" aria-label="Delete ${esc(v.reg_number)}">Delete</button>`, 1]], vs, "No vehicles yet. Add your first one below.")}</div>
+  <div class="card"><h3>${ed ? "Edit " + esc(ed.reg_number) : "Add a vehicle"}</h3><form class="row" id="f"><label>Registration no.<input id="r" maxlength="15" placeholder="MH12AB1234" value="${ed ? esc(ed.reg_number) : ""}"></label>
   <label>Type<select id="t"><option value="CAR">Car</option><option value="TWO_WHEELER">Two-wheeler</option></select></label>
   <label><span>EV</span><input id="ev" type="checkbox" ${ed && ed.is_ev ? "checked" : ""}></label><label><span>Accessible permit</span><input id="ac" type="checkbox" ${ed && ed.has_accessible_permit ? "checked" : ""}></label>
-  <button id="go">${ed ? "Save changes" : "Add"}</button>${ed ? `<button id="cancel" class="sec">Cancel</button>` : ""}</div></div>`;
+  <button id="go">${ed ? "Save changes" : "Add"}</button>${ed ? `<button id="cancel" type="button" class="sec">Cancel</button>` : ""}</form></div>`;
+  $("#f").onsubmit = e => e.preventDefault();
   if (ed) $("#t").value = ed.vehicle_type;
   el.querySelectorAll("[data-edit]").forEach(b => b.onclick = () => vehicles(el, +b.dataset.edit));
   el.querySelectorAll("[data-del]").forEach(b => b.onclick = async () => {
@@ -96,10 +123,11 @@ async function vehicles(el, editId = null) {
 }
 async function find(el) {
   const vs = await api("/vehicles"); const n = new Date();
-  el.innerHTML = vs.length ? `<div class="card"><div class="row"><label>Vehicle<select id="v">${vehOptions(vs)}</select></label>
+  el.innerHTML = vs.length ? `<div class="card"><form class="row" id="f"><label>Vehicle<select id="v">${vehOptions(vs)}</select></label>
   <label>From<input id="s" type="datetime-local" value="${dtl(new Date(n.getTime() + 36e5))}"></label>
-  <label>To<input id="e" type="datetime-local" value="${dtl(new Date(n.getTime() + 3 * 36e5))}"></label><button id="go">Find best slots</button></div></div><div id="res"></div>` : `<p>Add a vehicle first.</p>`;
+  <label>To<input id="e" type="datetime-local" value="${dtl(new Date(n.getTime() + 3 * 36e5))}"></label><button id="go">Find best slots</button></form></div><div id="res"></div>` : `<div class="empty">Add a vehicle first on the <a href="#vehicles">Vehicles</a> page, then come back.</div>`;
   if (!vs.length) return;
+  $("#f").onsubmit = e => e.preventDefault();
   $("#go").onclick = async () => {
     const rec = await act(() => api(`/recommend?vehicle_id=${$("#v").value}&start=${$("#s").value}&end=${$("#e").value}`));
     if (!rec) return;
@@ -114,21 +142,23 @@ async function find(el) {
 async function reservations(el) {
   const rs = await api("/reservations");
   el.innerHTML = `<div class="card">${table([["#", r => r.reservation_id], ["Vehicle", r => r.reg_number], ["Slot", r => r.slot_code], ["From", r => r.start_time], ["To", r => r.end_time], ["Status", r => r.status],
-    ["Why", r => r.alloc_reason || ""], ["", r => r.status === "PENDING" ? `<button class="red" data-id="${r.reservation_id}">Cancel</button>` : "", 1]], rs, "No reservations yet.")}</div>`;
+    ["Why", r => r.alloc_reason || ""], ["", r => r.status === "PENDING" ? `<button class="red" data-id="${r.reservation_id}">Cancel</button>` : "", 1]], rs, "No reservations yet. Use Find a slot to book one.")}</div>`;
   el.querySelectorAll("button[data-id]").forEach(b => b.onclick = async () => { if (await act(() => api("/reservations/" + b.dataset.id, "DELETE"), "Cancelled.")) reservations(el); });
 }
 async function parking(el) {
   const [vs, slots, act_, unpaid] = await Promise.all([api("/vehicles"), api("/slots"), api("/sessions/active"), api("/bills/unpaid")]);
   el.innerHTML = `<div class="card"><h3>Vehicle entry <span class="mut">(simulates the gate)</span></h3><div class="row"><label>Vehicle<select id="v">${vehOptions(vs)}</select></label>
-  <label>Slot<select id="sl"></select></label><button id="in">Enter</button></div></div>
+  <label>Slot<select id="sl"></select></label><button id="in">Enter</button></div>${vs.length ? "" : `<p class="mut">Add a vehicle first on the <a href="#vehicles">Vehicles</a> page.</p>`}</div>
   <div class="card"><h3>Vehicles inside now</h3>${table([["Session", s => s.session_id], ["Vehicle", s => s.reg_number], ["Slot", s => s.slot_code], ["Entered", s => s.entry_time], ["Minutes", s => s.elapsed_minutes], ["Amount so far", s => money(s.running_amount)],
     ["", s => `<button data-exit="${s.session_id}">Exit</button>`, 1]], act_, "No active sessions.")}</div>
   <div class="card"><h3>Unpaid bills</h3>${table([["Session", b => b.session_id], ["Vehicle", b => b.reg_number], ["Slot", b => b.slot_code], ["Exit", b => b.exit_time], ["Fee", b => money(b.parking_fee)], ["Status", b => b.payment_status],
     ["", b => `<button data-bill="${b.session_id}">Pay</button>`, 1]], unpaid, "No unpaid bills.")}</div><div id="bill"></div>`;
   const fill = () => { const v = vs.find(x => x.vehicle_id == $("#v").value);
     $("#sl").innerHTML = slots.filter(s => v && s.slot_type === v.vehicle_type && ["AVAILABLE", "RESERVED"].includes(s.live_status) && (!s.is_accessible || v.has_accessible_permit) && (!s.is_ev_charger || v.is_ev))
-      .map(s => `<option value="${s.slot_id}">${esc(s.slot_code)}${s.is_ev_charger ? " ⚡" : ""}${s.is_accessible ? " ♿" : ""} (${s.live_status.toLowerCase()})</option>`).join(""); };
-  if (vs.length) { $("#v").onchange = fill; fill(); }
+      .map(s => `<option value="${s.slot_id}">${esc(s.slot_code)}${s.is_ev_charger ? " ⚡" : ""}${s.is_accessible ? " ♿" : ""} (${s.live_status.toLowerCase()})</option>`).join("");
+    if (!$("#sl").options.length) $("#sl").innerHTML = `<option value="">No slot available</option>`;
+    $("#in").disabled = !v || !$("#sl").value; };
+  $("#v").onchange = fill; fill();
   $("#in").onclick = async () => { if (await act(() => api("/sessions/entry", "POST", {vehicle_id: +$("#v").value, slot_id: +$("#sl").value}), r => "Entry recorded, session " + r.session_id)) parking(el); };
   el.querySelectorAll("[data-exit]").forEach(b => b.onclick = async () => { const r = await act(() => api(`/sessions/${b.dataset.exit}/exit`, "POST"), r => "Exit done. Amount " + money(r.amount_due)); if (r) { await parking(el); showBill(r.bill); } });
   el.querySelectorAll("[data-bill]").forEach(b => b.onclick = async () => showBill(await act(() => api("/bills/" + b.dataset.bill))));
@@ -150,19 +180,20 @@ async function parking(el) {
 }
 
 // ---------- admin ----------
+const TLAB = {hourly_rate: "rupees per hour", grace_minutes: "grace minutes", min_charge: "minimum charge", daily_cap: "daily cap", overstay_fine_per_hour: "overstay fine per hour"};
 async function admin(el) {
   const [tf, sl, vi, au, us] = await Promise.all([api("/admin/tariffs"), api("/slots"), api("/admin/violations"), api("/admin/audit"), api("/admin/users")]);
   const vSorted = vi.slice().sort((a, b) => (a.status === "OPEN" ? 0 : 1) - (b.status === "OPEN" ? 0 : 1));
   el.innerHTML = `<div class="card"><h3>Tariffs</h3><table><tr><th>Type</th><th>Premium</th><th>₹/hour</th><th>Grace min</th><th>Min charge</th><th>Daily cap</th><th>Fine/hour</th><th></th></tr>${tf.map(t => `<tr data-t="${t.tariff_id}">
-    <td>${t.vehicle_type}</td><td>${t.is_premium ? "Yes" : "No"}</td>${["hourly_rate", "grace_minutes", "min_charge", "daily_cap", "overstay_fine_per_hour"].map(k => `<td><input size="5" maxlength="8" inputmode="decimal" data-k="${k}" value="${t[k] ?? ""}"></td>`).join("")}<td><button>Save</button></td></tr>`).join("")}</table></div>
+    <td>${t.vehicle_type}</td><td>${t.is_premium ? "Yes" : "No"}</td>${["hourly_rate", "grace_minutes", "min_charge", "daily_cap", "overstay_fine_per_hour"].map(k => `<td><input size="5" maxlength="8" inputmode="decimal" data-k="${k}" aria-label="${t.vehicle_type}${t.is_premium ? " premium" : ""}: ${TLAB[k]}" value="${t[k] ?? ""}"></td>`).join("")}<td><button>Save</button></td></tr>`).join("")}</table></div>
   <div class="card"><h3>Slot maintenance</h3><div class="row"><label>Slot<select id="sid">${sl.map(s => `<option value="${s.slot_id}">${esc(s.slot_code)} (${s.live_status})</option>`).join("")}</select></label>
   <button id="mt">Set maintenance</button><button id="av" class="sec">Set available</button><button id="jobs" class="sec">Run no-show / overstay / snapshot jobs now</button></div></div>
-  <div class="card"><h3>Violations <span class="mut">(open ones first)</span></h3><div class="row"><label>Session no.<input id="vs" size="6"></label><label>Type<select id="vt"><option>OVERSTAY</option><option>WRONG_SLOT</option><option>UNAUTHORIZED_BAY</option></select></label>
+  <div class="card"><h3>Violations <span class="mut">(open ones first)</span></h3><div class="row"><label>Session no.<input id="vs" size="6" inputmode="numeric"></label><label>Type<select id="vt"><option>OVERSTAY</option><option>WRONG_SLOT</option><option>UNAUTHORIZED_BAY</option></select></label>
   <label>Fine<input id="vf" size="5" value="0"></label><label>Notes<input id="vn" maxlength="255"></label><button id="vb">Log violation</button></div>
   ${table([["#", v => v.violation_id], ["Vehicle", v => v.reg_number], ["Type", v => v.violation_type], ["Fine", v => money(v.fine_amount)], ["Status", v => v.status], ["When", v => v.detected_at], ["Notes", v => v.notes || ""],
-    ["", v => v.status === "OPEN" ? `<button data-vs="${v.violation_id}" data-to="PAID">Mark paid</button> <button class="sec" data-vs="${v.violation_id}" data-to="WAIVED">Waive</button>` : "", 1]], vSorted.slice(0, 20))}</div>
+    ["", v => v.status === "OPEN" ? `<button data-vs="${v.violation_id}" data-to="PAID">Mark paid</button> <button class="sec" data-vs="${v.violation_id}" data-to="WAIVED">Waive</button>` : "", 1]], vSorted.slice(0, 20), "No violations logged yet.")}</div>
   <div class="card"><h3>Users <span class="mut">(${us.length})</span></h3><div class="scroll">${table([["#", u => u.user_id], ["Name", u => u.full_name], ["Email", u => u.email], ["Phone", u => u.phone || ""], ["Role", u => u.role], ["Vehicles", u => u.vehicles], ["Joined", u => u.created_at]], us)}</div></div>
-  <div class="card"><h3>Audit log (latest)</h3>${table([["When", a => a.created_at], ["Who", a => a.actor || "system"], ["Action", a => a.action], ["Entity", a => a.entity + " #" + a.entity_id], ["Old", a => a.old_value || ""], ["New", a => a.new_value || ""]], au.slice(0, 15))}</div>`;
+  <div class="card"><h3>Audit log (latest)</h3>${table([["When", a => a.created_at], ["Who", a => a.actor || "system"], ["Action", a => a.action], ["Entity", a => a.entity + " #" + a.entity_id], ["Old", a => a.old_value || ""], ["New", a => a.new_value || ""]], au.slice(0, 15), "No audit entries yet.")}</div>`;
   el.querySelectorAll("tr[data-t] button").forEach(b => b.onclick = async () => {
     const tr = b.closest("tr"), body = {tariff_id: +tr.dataset.t}; tr.querySelectorAll("input").forEach(i => body[i.dataset.k] = i.value);
     if (await act(() => api("/admin/tariffs", "PUT", body), r => r.message)) admin(el);
@@ -185,9 +216,13 @@ async function analytics(el) {
   <div class="card"><h3>Expected busyness by weekday and hour <span class="mut">(rule-based average of past data, not AI)</span></h3><div id="heat"></div></div>
   <div class="card"><h3>Carbon-savings estimate</h3><p>${co.sessions} sessions · ${co.metres_saved} m of driving saved · about <b>${co.co2_saved_g} g CO₂</b>.</p><p class="mut">${esc(co.note)} Small by design — shown as a minor widget.</p></div>`;
   if (window.Chart) {
-    charts.push(new Chart($("#c1"), {type: "line", data: {labels: rev.map(r => r.revenue_date), datasets: [{label: "₹", data: rev.map(r => r.revenue), borderColor: "#1565c0", tension: .25}]}, options: {plugins: {legend: {display: false}}}}));
-    charts.push(new Chart($("#c2"), {type: "bar", data: {labels: hr.map(h => h.hour_of_day + ":00"), datasets: [{label: "Entries", data: hr.map(h => h.entries), backgroundColor: "#1565c0"}]}, options: {plugins: {legend: {display: false}}}}));
-  } else el.insertAdjacentHTML("beforeend", "<p class='mut'>Charts need internet access for Chart.js.</p>");
+    const css = getComputedStyle(document.documentElement);
+    Chart.defaults.color = css.getPropertyValue("--ink").trim(); Chart.defaults.borderColor = css.getPropertyValue("--line").trim();
+    if (!rev.length) $("#c1").replaceWith(Object.assign(document.createElement("div"), {className: "empty", textContent: "No revenue yet."}));
+    else charts.push(new Chart($("#c1"), {type: "line", data: {labels: rev.map(r => r.revenue_date), datasets: [{label: "₹", data: rev.map(r => r.revenue), borderColor: "#1565c0", tension: .25}]}, options: {plugins: {legend: {display: false}}}}));
+    if (!hr.length) $("#c2").replaceWith(Object.assign(document.createElement("div"), {className: "empty", textContent: "No entries yet."}));
+    else charts.push(new Chart($("#c2"), {type: "bar", data: {labels: hr.map(h => h.hour_of_day + ":00"), datasets: [{label: "Entries", data: hr.map(h => h.entries), backgroundColor: "#1565c0"}]}, options: {plugins: {legend: {display: false}}}}));
+  } else el.insertAdjacentHTML("beforeend", "<p class='err'>The charts could not load. Check that frontend/static/chart.umd.js exists, then reload the page.</p>");
   const days = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"], m = {};
   fc.forEach(f => m[f.day_of_week + "-" + f.hour_of_day] = f.avg_occupancy_pct);
   const col = p => p == null ? "transparent" : `hsl(${120 - Math.min(p, 100) * 1.2},65%,${p == null ? 50 : 55}%)`;

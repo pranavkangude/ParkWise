@@ -7,7 +7,7 @@
 
 ```
 +---------------------------------------------------------------+
-|  BROWSER  (HTML / CSS / JS / Bootstrap / Chart.js)           |
+|  BROWSER  (plain HTML / CSS / JS, Chart.js)                   |
 |  Pages: login, live board, find slot, reservations, entry/    |
 |  exit, bill+pay, admin, analytics                             |
 +------------------------------+--------------------------------+
@@ -181,17 +181,17 @@ Base path `/api`. All bodies are JSON. Errors: `{"error": "<message from SIGNAL 
 ## 9. Folder structure
 
 ```
-parkwise/
-  db/            schema.sql  seed.sql  tests.sql  tests_concurrency.py        (M1)
+ParkWise/
+  schema.sql  seed.sql  tests.sql  tests_concurrency.py                   (database)
+  tests_api.py  tests_security.py                                         (HTTP tests)
   backend/
-    app.py  config.py  db.py  auth.py  errors.py                              (M2)
-    routes/  vehicles.py slots.py reservations.py sessions.py billing.py admin.py   (M2)
-    routes/analytics.py                                                       (M1)
-    simulate.py                                                               (M2)
-  frontend/
-    templates/ or static/  *.html  css/  js/                                   (M3)
-  docs/          Architecture.md  Workflow.md  Decision.md  report/  slides/   (M3 + all)
-  README.md
+    app.py  config.py  db.py  auth.py  errors.py  validate.py  ratelimit.py
+    routes/  vehicles.py slots.py reservations.py sessions.py billing.py admin.py analytics.py
+    simulate.py  requirements.txt  .env.example
+  frontend/static/
+    index.html  style.css  app.js  chart.umd.js  favicon.svg
+  docs/          API.md
+  Architecture.md  Workflow.md  Decision.md  README.md
 ```
 
 ## 10. Security and quality rules
