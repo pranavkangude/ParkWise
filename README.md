@@ -1,22 +1,99 @@
-# ParkWise — Smart Parking Allocation & Predictive Management System
+# ParkWise: Smart Parking Allocation & Predictive Management System
 
-DBMS course project · MySQL 8 · Flask · HTML/CSS/JS · Single parking lot, multiple zones · Team of 3
+DBMS course project · MySQL 8 · Flask · HTML/CSS/JS · One parking lot, four zones (A to D), 24 slots
 
-## 1. What is in this package
+**The database is the brain.** Every rule that must never be broken (no double booking, who may use which bay, billing, audit) lives in MySQL. Flask is a thin layer that checks who you are and calls the database. The browser only shows and sends.
 
-| File | Purpose |
+## 1. Quick start (from a clean clone)
+
+You need: Windows, **MySQL Server 8.0**, **Python 3.10 or newer** (the pinned libraries were tested on 3.10.11), Git, and VS Code.
+
+**1. Get the code**
+```
+git clone <repo-url>
+cd ParkWise
+```
+If the path has a space, put it in quotes: `cd "C:\Users\...\ParkWise"`.
+
+**2. Create a virtual environment and install the libraries**
+```
+python -m venv venv
+venv\Scripts\activate
+pip install -r backend\requirements.txt
+pip check
+```
+`pip check` must say `No broken requirements found`. If PowerShell blocks `activate`, run `Set-ExecutionPolicy -Scope Process Bypass` once and try again.
+
+**3. Load the database.** If `mysql` is not recognised, run the first line (it lasts for that terminal only).
+```
+$env:Path += ";C:\Program Files\MySQL\MySQL Server 8.0\bin"
+mysql -u root -p
+```
+At the `mysql>` prompt (the `source` command only works there, not in PowerShell):
+```
+SET GLOBAL event_scheduler = ON;
+source schema.sql;
+source seed.sql;
+exit
+```
+`SET GLOBAL event_scheduler = ON;` lasts until MySQL restarts. For a permanent setting, add `event_scheduler=ON` under `[mysqld]` in `C:\ProgramData\MySQL\MySQL Server 8.0\my.ini` and restart the `MySQL80` service from an Administrator prompt.
+
+**4. Configure and start the app**
+```
+cd backend
+copy .env.example .env
+notepad .env
+python app.py
+```
+In `.env` set `PW_DB_PASSWORD` to your MySQL root password and `PW_SECRET_KEY` to any long random text. Never commit `.env`. Open http://127.0.0.1:5000.
+
+**5. Log in.** `admin@parkwise.test` / `Admin@123` (admin) and `aarav@parkwise.test` / `Student@123` (student; the other demo students use the same password). These are demo credentials only.
+
+**6. Optional demo traffic** (second terminal, venv active): `cd backend` then `python simulate.py --count 40 --delay 0.5`. If the event scheduler is off, the admin page has a button that runs the no-show, overstay and snapshot jobs by hand.
+
+### Run the tests
+
+The tests change data. **Reload `schema.sql` and `seed.sql` before each group** (a second run on dirty data reports false FAILs).
+
+| Order | Command | Needs | Expected result |
+|---|---|---|---|
+| 1 | `source tests.sql;` at the `mysql>` prompt | database only | `PASS | 74` and an empty non-PASS list |
+| 2 | `python tests_api.py` (project root) | app running | `RESULT: 37/37 passed` |
+| 3 | `python tests_security.py` (right after 2, same database) | app running | `RESULT: 52/52 passed` |
+| 4 | `python tests_concurrency.py --user root --password <pwd>` | database only | `RESULT: PASS` |
+
+**Test status.** On 12 November 2026 `tests.sql` (74), `tests_api.py` (37) and `tests_security.py` (52) all passed on MariaDB 10.11, which is MySQL-compatible. Before the audit trigger for violations was added, `tests_api.py` and `tests_security.py` also passed in full on MySQL 8.0 on a Windows laptop. Run all four suites on your own MySQL 8.0 before the demo. If anything fails, copy the exact error text into the group chat.
+
+### Common problems
+
+| Problem | Fix |
+|---|---|
+| `mysql` is not recognised | Run the `$env:Path` line above, or add the MySQL `bin` folder to Windows PATH |
+| `source` is not recognised | You are at the PowerShell prompt. Run `mysql -u root -p` first, then `source` at `mysql>` |
+| `Unknown database 'parkwise'` | `schema.sql` did not load. Start `mysql` from the folder that contains it |
+| `Access denied` when the app starts | Wrong `PW_DB_PASSWORD` in `backend/.env` |
+| `Database error` in the app | MySQL is not running, or the schema is not loaded |
+| Login says "Too many failed logins. Try again in N minute(s)." | Five wrong passwords lock that e-mail for 15 minutes. Restart the app to clear it |
+| A page looks old after an update | Press Ctrl + F5 to reload without the browser cache |
+| Charts are empty | Check that `frontend/static/chart.umd.js` exists (Chart.js is served from the project, no internet needed) |
+
+## 2. What is in this repository
+
+| Path | Purpose |
 |---|---|
 | `schema.sql` | Final schema: 12 tables, 3 functions, 12 procedures, 8 triggers, 9 views, 3 scheduled events |
 | `seed.sql` | Reference data (4 zones, 24 slots, 3 tariffs, settings), 7 users, 14 vehicles, 30 days of synthetic history |
 | `tests.sql` | 74 automated SQL checks (billing, entry/exit, reservations, scheduler jobs, constraints, audit) |
-| `tests_concurrency.py` | Parallel double-booking / double-entry test |
+| `tests_api.py`, `tests_security.py` | 37 API checks and 52 security checks over real HTTP |
+| `tests_concurrency.py` | Parallel double-booking and double-entry test |
+| `backend/` | Flask app: `app.py`, `config.py`, `db.py`, `errors.py`, `auth.py`, `validate.py`, `ratelimit.py`, `routes/` (one file per API group), `simulate.py` (traffic simulator), `requirements.txt` |
+| `frontend/static/` | `index.html`, `style.css`, `app.js` (plain JavaScript, no build step), `chart.umd.js` (Chart.js 4.4.1, MIT licence in `chart.LICENSE.txt`), `favicon.svg` |
+| `docs/API.md` | Every endpoint with real requests and responses |
 | `Architecture.md` | Layers, ER diagram, data dictionary, API contract, folder structure |
-| `Workflow.md` | Business flows, state machines, team workflow, demo script |
+| `Workflow.md` | Business flows, state machines, team workflow, demo script (Part C) |
 | `Decision.md` | Every design decision with reasons, limitations and open items |
 
-**Test status.** Verified on MariaDB 10.11, the MySQL-compatible server available while this package was prepared, including a run with binary logging ON (MySQL 8's default). Results: `schema.sql` and `seed.sql` load with no errors, all 74 checks in `tests.sql` pass, `tests_concurrency.py` ends with `RESULT: PASS`, the `ev_release_no_shows` event fired by itself with the scheduler ON, the two-terminal demo in Workflow.md Part C behaves as described, and every demo login in §4 matches its password. It was **not** run on MySQL 8.0. The syntax is MySQL 8 syntax, but run `schema.sql`, `seed.sql`, `tests.sql` and `tests_concurrency.py` on your own MySQL 8 first. If anything fails, copy the exact error text into the group chat.
-
-## 2. Final feature list
+## 3. Final feature list
 
 **Core (must be 100% working)**
 
@@ -47,7 +124,7 @@ DBMS course project · MySQL 8 · Flask · HTML/CSS/JS · Single parking lot, mu
 
 **Stretch (only after everything above is demo-ready):** ANPR from an uploaded plate photo (OpenCV + OCR, manual entry stays as fallback), QR code on the reservation, e-mail notifications.
 
-## 3. Final schema at a glance
+## 4. Final schema at a glance
 
 ```
 users ──< vehicles ──< reservations >── parking_slots >── zones
@@ -61,38 +138,18 @@ users ──< vehicles ──< reservations >── parking_slots >── zones
 
 Full ER diagram and data dictionary: `Architecture.md` §4.
 
-## 4. Setup on Windows (MySQL 8 + VS Code)
+## 5. Team roles
 
-1. Install MySQL Server 8.0 and MySQL Workbench. Install Python 3.11+ and VS Code.
-2. Turn on the event scheduler. Workbench → `SET GLOBAL event_scheduler = ON;` (lasts until restart). For a permanent setting, add `event_scheduler=ON` under `[mysqld]` in `C:\ProgramData\MySQL\MySQL Server 8.0\my.ini` and restart the `MySQL80` service from an Administrator prompt.
-3. Load the database. In Workbench use File → Open SQL Script, run `schema.sql`, then `seed.sql`. Or in a terminal: `mysql -u root -p`, then `source C:/path/to/schema.sql;` and `source C:/path/to/seed.sql;`. PowerShell does not support `<` redirection.
-4. Run the tests: `source tests.sql;` should show `PASS | 74` and an empty "non-PASS" list. The tests change data, so reload `schema.sql` + `seed.sql` before every re-run (a second run on dirty data reports false FAILs). Then reload schema and seed again, and run `python tests_concurrency.py --user root --password <pwd>` (after `pip install mysql-connector-python`). It should end with `RESULT: PASS`.
-5. Demo logins: `admin@parkwise.test` / `Admin@123`, and students such as `aarav@parkwise.test` / `Student@123`. These are demo credentials only.
+`schema.sql` and `docs/API.md` are the contract between the roles. Change them only by group agreement and write the change in `Decision.md` in the same commit. Each person must be able to demo any flow and explain their own part.
 
-## 5. Work split — 3 members
-
-The split is by ownership of a vertical slice, so nobody waits on one person. The contract between slices is the **API table in Architecture.md §8** and the **schema**. Agree on both on day 1 and change them only by group decision.
-
-| | **Member 1 — Data & Analytics** | **Member 2 — Transactions & Backend** | **Member 3 — Frontend & Delivery** |
-|---|---|---|---|
-| **Owns** | Schema, constraints, indexes, triggers, views, events, seed + history generator. All read-only analytics endpoints. | Stored procedures and functions (review, extend, own). Flask app skeleton, auth, all write-side endpoints, error mapping, traffic simulator. | All UI pages, Chart.js dashboards, UX, project report, PPT, demo rehearsal. |
-| **Builds** | • Load, review and extend `schema.sql`/`seed.sql`<br>• Index benchmark with `EXPLAIN` (before/after)<br>• Analytics endpoints: revenue, hourly demand, forecast, carbon, summary<br>• Maintain `tests.sql` and `tests_concurrency.py`; add 10 more tests<br>• MySQL Workbench EER diagram + normalization proof (1NF → 3NF) | • Flask project (config, DB pool, blueprints)<br>• Register/login/logout, password hashing, role guard<br>• Endpoints: vehicles, slots, recommend, reserve, cancel, entry, exit, pay, admin CRUD, violations<br>• Map SQLSTATE 45000 messages to HTTP 409/400 JSON<br>• `SET @app_user_id` on every admin request<br>• `simulate.py`: random cars and bikes entering and leaving | • Pages: login/register, live board (zones, colours, auto-refresh), find-a-slot (shows score and reason), my reservations, entry/exit panel, bill and pay, admin (slots, tariffs, violations, audit), analytics<br>• Chart.js: revenue, hourly demand, forecast heat-map, zone occupancy<br>• 25 manual UI test cases + screenshots<br>• Report (structure in the course doc) and PPT<br>• Run two full demo rehearsals |
-| **Viva topics** | ER diagram, normalization, constraints, triggers, indexes, views, events, forecast query | Procedures vs triggers vs functions, transactions, `FOR UPDATE`, isolation level, billing rule, scoring algorithm, double-booking proof | End-to-end flow, why the DB is the "brain", dashboards and their SQL source, limitations |
-| **Effort (est.)** | ~30 h | ~32 h | ~32 h |
-
-**Rules that keep the load equal**
-- Each member reviews one other member's work (1 → 2 → 3 → 1) before every merge to `main`.
-- Each member must be able to demo any flow and explain one procedure, one trigger, one view and one chart. Examiners ask each person different questions.
-- The core SQL is already written and tested here, so Members 1 and 2 spend their time on understanding, extending, integrating and breaking it. Member 3 has the largest amount of new code, which is why Member 1 also takes the report's database chapters and Member 2 builds the simulator that powers the live demo.
-
-**Suggested schedule (adjust to your deadline)**
-
-| Week | Milestone |
+| Role | Owns |
 |---|---|
-| 1 | Everyone loads the DB and runs the tests. API contract frozen. Flask skeleton + auth. UI shell and live board using `/api/slots`. |
-| 2 | Reserve, entry, exit, pay working end to end (API + UI). Analytics endpoints. Charts. |
-| 3 | Innovations (recommendation UI, no-show / overstay demo, forecast page). Admin pages. Simulator. Fix bugs found by the tests. |
-| 4 | Freeze features. Report, PPT, rehearsals. Only bug fixes after this point. |
+| Member 1: Database & Analytics | Schema, constraints, indexes, views, events, seed data, analytics endpoints, `tests.sql` |
+| Member 2: Transactions & Backend | Stored procedures and functions, Flask skeleton, booking, entry, exit and payment endpoints, simulator |
+| Member 3: Accounts, Admin & Rules | Login, roles, vehicles, admin pages, tariffs, violations, audit log, security hardening, `tests_security.py` |
+| Member 4: User Interface & Delivery | `frontend/static/`, offline charts, UI polish, UI tests UI-09 to UI-25, report chapters, slides, demo rehearsals |
+
+Names go in the report and slides (open decision in `Decision.md`).
 
 ## 6. Known limitations (say them before the examiner does)
 - Payments are simulated; there is no real gateway.
@@ -100,26 +157,8 @@ The split is by ownership of a vertical slice, so nobody waits on one person. Th
 - The forecast is a historical average over synthetic demo data; it is not AI.
 - The carbon figure is an estimate with documented assumptions (Decision.md D-10).
 - Overstay detection only applies to reserved sessions, because a walk-in has no booked end time (Decision.md D-09).
+- Login limit counts failures in memory per e-mail, so a restart clears it. There is no password reset, no HTTPS and no CSRF token (the Origin check and `SameSite=Lax` are used instead). See `Decision.md` D-19.
 
-## 7. Running the web app (backend + frontend)
+## 7. Demo
 
-From the `parkwise` folder, after `schema.sql` and `seed.sql` are loaded (section 4):
-
-```
-cd backend
-copy .env.example .env          (then edit .env: set PW_DB_PASSWORD to your MySQL root password)
-pip install -r requirements.txt
-python app.py
-```
-Open http://127.0.0.1:5000 in the browser. Logins: `admin@parkwise.test` / `Admin@123`, `aarav@parkwise.test` / `Student@123`.
-Dashboards use Chart.js from a CDN, so the analytics page needs internet.
-
-Demo traffic: in a second terminal, `cd backend` then `python simulate.py --count 40 --delay 0.5`.
-If the event scheduler is off, the admin page has a button that runs the no-show / overstay / snapshot jobs by hand.
-
-| Folder / file | What it does |
-|---|---|
-| `backend/app.py`, `config.py`, `db.py`, `errors.py`, `auth.py` | Flask app, settings, DB pool, error mapping (SQLSTATE 45000 -> HTTP 409), login and roles |
-| `backend/routes/` | One file per API group, as in Architecture.md section 8 (`analytics.py` is Member 1's) |
-| `backend/simulate.py` | Traffic simulator for the demo |
-| `frontend/static/` | `index.html`, `style.css`, `app.js` (plain JavaScript, no build step) |
+Follow `Workflow.md` Part C (about 10 minutes). Reload `schema.sql` and `seed.sql` before every rehearsal so the board starts clean.
