@@ -34,3 +34,6 @@ p.err{color:var(--bad-txt);font-weight:600;margin:10px 0 0}.warn{color:var(--bad
   .grid{grid-template-columns:repeat(auto-fill,minmax(76px,1fr))}.tiles{grid-template-columns:repeat(auto-fill,minmax(130px,1fr))}
   #toast{left:12px;right:12px;max-width:none}h2{font-size:20px}.card{padding:10px}
 }
+
+/* Teammate A: "OCCUPIED" must fit the small slot tiles on phones */
+@media(max-width:480px){.slot{padding:8px 4px}.slot small{font-size:10px;letter-spacing:0}}

@@ -33,7 +33,7 @@ function table(cols, data, empty = "Nothing to show.") {
     data.map(r => `<tr>${cols.map(c => `<td>${c[2] ? c[1](r) : esc(c[1](r))}</td>`).join("")}</tr>`).join("") + `</table>`;
 }
 
-const SHORT = {AVAILABLE: "free", OCCUPIED: "busy", RESERVED: "booked", MAINTENANCE: "maint."};
+const SHORT = {AVAILABLE: "free", OCCUPIED: "occupied", RESERVED: "booked"};
 const routes = {
   "": {t: "Live board", f: board}, board: {t: "Live board", f: board},
   find: {t: "Find a slot", f: find, auth: 1}, vehicles: {t: "My vehicles", f: vehicles, auth: 1},
@@ -75,15 +75,18 @@ async function render() {
 // ---------- public ----------
 async function board(el) {
   const draw = async () => {
-    const [zones, slots] = await Promise.all([api("/zones/occupancy"), api("/slots")]);
-    el.innerHTML = `<div class="tiles">${zones.map(z => `<div class="tile"><span>Zone ${esc(z.zone_code)} · ${esc(z.zone_name)}</span><b>${z.available}/${z.total_slots} free</b><span>${z.occupied} occupied · ${z.reserved} reserved · ${z.maintenance} maint.</span></div>`).join("")}</div>
-    <p>${["AVAILABLE","OCCUPIED","RESERVED","MAINTENANCE"].map(s => `<span class="pill ${s}">${s}</span>`).join(" ")} <span class="mut">⚡ EV charger · ♿ accessible · ★ premium · refreshes every 10 s · </span><span id="upd" class="mut">updated ${new Date().toLocaleTimeString()}</span></p>` +
+    const [zones, all] = await Promise.all([api("/zones/occupancy"), api("/slots")]);
+    const slots = all.filter(s => s.live_status !== "MAINTENANCE");          // maintenance slots are not shown
+    const shown = zones.filter(z => z.total_slots - z.maintenance > 0);
+    el.innerHTML = `<div class="tiles">${shown.map(z => `<div class="tile"><span>Zone ${esc(z.zone_code)} · ${esc(z.zone_name)}</span><b>${z.available}/${z.total_slots - z.maintenance} free</b><span>${z.occupied} occupied · ${z.reserved} reserved</span></div>`).join("")}</div>
+    <p>${["AVAILABLE","OCCUPIED","RESERVED"].map(s => `<span class="pill ${s}">${s}</span>`).join(" ")} <span class="mut">⚡ EV charger · ♿ accessible · ★ premium · refreshes every 10 s · </span><span id="upd" class="mut">updated ${new Date().toLocaleTimeString()}</span></p>` +
     (slots.length ? "" : `<div class="empty">No parking slots are set up yet.</div>`) +
     [...new Set(slots.map(s => s.zone_code))].map(z => `<h3>Zone ${esc(z)}</h3><div class="grid">${slots.filter(s => s.zone_code === z).map(s =>
       `<div class="slot ${s.live_status}" title="${esc(s.slot_type)} · ${s.distance_to_entrance_m} m from entrance"><b>${esc(s.slot_code)}</b>${s.slot_type === "CAR" ? "Car" : "Bike"} ${s.is_ev_charger ? "⚡" : ""}${s.is_accessible ? "♿" : ""}${s.is_premium ? "★" : ""}<small>${SHORT[s.live_status] || ""}</small></div>`).join("")}</div>`).join("");
   };
   await draw(); timer = setInterval(() => draw().catch(() => { const u = $("#upd"); if (u) { u.textContent = "connection problem, retrying…"; u.className = "warn"; } }), 10000);
 }
+
 function login(el) {
   el.innerHTML = `<div class="card"><form class="row" id="f"><label>Email<input id="e" type="email" maxlength="120" autocomplete="username"></label><label>Password<input id="p" type="password" maxlength="128" autocomplete="current-password"></label><button id="go">Login</button></form>
   <p class="mut">Demo: admin@parkwise.test / Admin@123 · aarav@parkwise.test / Student@123</p></div>`;
@@ -121,24 +124,48 @@ async function vehicles(el, editId = null) {
     if (r) vehicles(el);
   };
 }
+
+// Teammate A: plate-free vehicle names for the Find-a-slot picker; numbered when a kind repeats
+function vehKinds(vs) {
+  const kind = v => v.vehicle_type === "CAR" ? (v.is_ev ? "Car (EV)" : "Car") : "Bike";
+  const total = {}, seen = {};
+  vs.forEach(v => { const k = kind(v); total[k] = (total[k] || 0) + 1; });
+  return vs.map(v => { const k = kind(v); seen[k] = (seen[k] || 0) + 1; return {id: v.vehicle_id, label: total[k] > 1 ? `${k} ${seen[k]}` : k}; });
+}
+
+
 async function find(el) {
   const vs = await api("/vehicles"); const n = new Date();
-  el.innerHTML = vs.length ? `<div class="card"><form class="row" id="f"><label>Vehicle<select id="v">${vehOptions(vs)}</select></label>
+  const names = vehKinds(vs);
+  el.innerHTML = vs.length ? `<div class="card"><form class="row" id="f"><label>Vehicle<select id="v">${names.map(x => `<option value="${x.id}">${esc(x.label)}</option>`).join("")}</select></label>
   <label>From<input id="s" type="datetime-local" value="${dtl(new Date(n.getTime() + 36e5))}"></label>
-  <label>To<input id="e" type="datetime-local" value="${dtl(new Date(n.getTime() + 3 * 36e5))}"></label><button id="go">Find best slots</button></form></div><div id="res"></div>` : `<div class="empty">Add a vehicle first on the <a href="#vehicles">Vehicles</a> page, then come back.</div>`;
+  <label>To<input id="e" type="datetime-local" value="${dtl(new Date(n.getTime() + 3 * 36e5))}"></label>
+  <label><span>I need an accessible (disability) bay</span><input id="acc" type="checkbox"></label><button id="go">Find best slots</button></form>
+  <p class="err" id="accmsg" role="alert" hidden></p></div><div id="res"></div>` : `<div class="empty">Add a vehicle first on the <a href="#vehicles">Vehicles</a> page, then come back.</div>`;
   if (!vs.length) return;
+  const sync = () => {                       // runs when the vehicle or the checkbox changes; also clears old results
+    const v = vs.find(x => x.vehicle_id == $("#v").value);
+    const bad = $("#acc").checked && !(v && v.has_accessible_permit);
+    $("#accmsg").hidden = !bad; $("#accmsg").textContent = bad ? "This vehicle has no accessibility permit." : "";
+    $("#go").disabled = bad; $("#res").innerHTML = "";
+  };
+  $("#v").onchange = sync; $("#acc").onchange = sync;
   $("#f").onsubmit = e => e.preventDefault();
   $("#go").onclick = async () => {
-    const rec = await act(() => api(`/recommend?vehicle_id=${$("#v").value}&start=${$("#s").value}&end=${$("#e").value}`));
-    if (!rec) return;
-    $("#res").innerHTML = `<div class="card">${table([["Slot", s => s.slot_code], ["Zone", s => s.zone_name], ["Score", s => Number(s.score).toFixed(3)], ["Why this slot", s => s.reason],
-      ["", s => `<button data-id="${s.slot_id}">Reserve</button>`, 1]], rec, "No slot fits this vehicle and time.")}</div>`;
+    const wantAcc = $("#acc").checked;
+    const out = await act(() => Promise.all([api(`/recommend?vehicle_id=${$("#v").value}&start=${$("#s").value}&end=${$("#e").value}`), wantAcc ? api("/slots") : null]));
+    if (!out) return;
+    let rec = out[0]; const accIds = new Set();
+    if (wantAcc) { out[1].forEach(s => { if (s.is_accessible) accIds.add(s.slot_id); }); rec = rec.filter(s => accIds.has(s.slot_id)); }
+    $("#res").innerHTML = `<div class="card">${table([["Slot", s => s.slot_code + (accIds.has(s.slot_id) ? " ♿" : "")], ["Zone", s => s.zone_name], ["Score", s => Number(s.score).toFixed(3)], ["Why this slot", s => s.reason],
+      ["", s => `<button data-id="${s.slot_id}">Reserve</button>`, 1]], rec, wantAcc ? "No accessible bay is free for this time." : "No slot fits this vehicle and time.")}</div>`;
     el.querySelectorAll("#res button").forEach(b => b.onclick = async () => {
       const r = await act(() => api("/reservations", "POST", {vehicle_id: +$("#v").value, slot_id: +b.dataset.id, start: $("#s").value, end: $("#e").value}), "Reserved!");
       if (r) location.hash = "reservations";
     });
   };
 }
+
 async function reservations(el) {
   const rs = await api("/reservations");
   el.innerHTML = `<div class="card">${table([["#", r => r.reservation_id], ["Vehicle", r => r.reg_number], ["Slot", r => r.slot_code], ["From", r => r.start_time], ["To", r => r.end_time], ["Status", r => r.status],
