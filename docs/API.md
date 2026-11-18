@@ -59,6 +59,7 @@ The mapping is done in `backend/errors.py`. The message in a 409 is the text of 
 | POST | `/api/sessions/{id}/exit` | Logged-in user | Vehicle exit |
 | GET | `/api/sessions/active` | Logged-in user | Vehicles inside now |
 | GET | `/api/bills/unpaid` | Logged-in user | Unpaid bills |
+| GET | `/api/penalties` | Logged-in user | The user's own violations (fines), newest first. The UI shows OVERSTAY as "Overcharge" and the other types as "Penalties" |
 | GET | `/api/bills/{id}` | Logged-in user | Itemized bill |
 | POST | `/api/payments` | Logged-in user | Pay a bill (simulated) |
 | GET | `/api/admin/tariffs` | Admin only | List tariffs |

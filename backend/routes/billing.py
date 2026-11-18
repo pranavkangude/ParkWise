@@ -16,6 +16,14 @@ def unpaid():
     return jsonify(db.rows(sql + " WHERE reg_number IN (SELECT reg_number FROM vehicles WHERE user_id = %s) ORDER BY exit_time",
                            (session["uid"],)))
 
+@bp.get("/penalties")
+@login_required
+def penalties():
+    """The logged-in user's own violations (fines), newest first."""
+    return jsonify(db.rows("""SELECT x.violation_id, v.reg_number, x.violation_type, x.fine_amount, x.status, x.detected_at, x.notes
+                              FROM violations x JOIN vehicles v ON v.vehicle_id = x.vehicle_id
+                              WHERE v.user_id = %s ORDER BY x.detected_at DESC LIMIT 200""", (session["uid"],)))
+
 @bp.get("/bills/<int:sid>")
 @login_required
 def bill(sid):
